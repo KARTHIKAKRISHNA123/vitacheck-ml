@@ -603,15 +603,6 @@ streamlit run app.py
 | HF push rejected binary files | PNG files not in LFS | Run `git lfs migrate import --include="*.png" --everything` |
 | KeyError RdY1Gn colormap | Typo — 1 instead of lowercase l | Change to `cmap="RdYlGn"` |
 
----
-
-## Future Roadmap
-
-- SHAP values for per-prediction feature attribution
-- XGBoost and LightGBM comparison
-- FastAPI backend to decouple inference from Streamlit
-- CSV batch prediction upload
-- User authentication for session persistence
 
 ---
 
