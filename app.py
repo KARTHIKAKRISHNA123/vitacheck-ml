@@ -17,24 +17,18 @@ st.set_page_config(
 # ── Dark Theme CSS ─────────────────────────────────────
 st.markdown("""
 <style>
-/* ── Global dark background ── */
 [data-testid="stAppViewContainer"],
 [data-testid="stAppViewContainer"] > .main {
     background-color: #0f1117;
     color: #e8ecf4;
 }
-[data-testid="stHeader"] {
-    background-color: #0f1117;
-}
+[data-testid="stHeader"] { background-color: #0f1117; }
 
-/* ── Sidebar ── */
 [data-testid="stSidebar"] {
     background-color: #1a1f2e;
     border-right: 1px solid #2d3347;
 }
-[data-testid="stSidebar"] * {
-    color: #c9d1e0 !important;
-}
+[data-testid="stSidebar"] * { color: #c9d1e0 !important; }
 [data-testid="stSidebar"] h2,
 [data-testid="stSidebar"] h3 {
     color: #ffffff !important;
@@ -56,7 +50,6 @@ st.markdown("""
     background: linear-gradient(135deg, #1d4ed8, #1e40af) !important;
 }
 
-/* ── Main content text ── */
 [data-testid="stAppViewContainer"] h1 { color: #f0f4ff !important; }
 [data-testid="stAppViewContainer"] h2,
 [data-testid="stAppViewContainer"] h3 { color: #dde3f5 !important; }
@@ -64,7 +57,6 @@ st.markdown("""
 [data-testid="stAppViewContainer"] span,
 [data-testid="stAppViewContainer"] div { color: #c9d1e0 !important; }
 
-/* ── Metric cards ── */
 .vc-metric {
     background: #1a1f2e;
     border: 1px solid #2d3347;
@@ -88,7 +80,6 @@ st.markdown("""
     line-height: 1.2;
 }
 
-/* ── Section titles ── */
 .vc-section-title {
     font-size: 1.1rem;
     font-weight: 700;
@@ -105,7 +96,6 @@ st.markdown("""
     padding-left: 1rem;
 }
 
-/* ── Result cards ── */
 .vc-result-risk {
     background: #1f1215;
     border: 1.5px solid #f5222d;
@@ -141,7 +131,6 @@ st.markdown("""
     margin: 0.4rem 0 0;
 }
 
-/* ── Risk / healthy items ── */
 .vc-risk-item {
     background: #1f1215;
     border-left: 3px solid #f5222d;
@@ -161,7 +150,6 @@ st.markdown("""
     color: #c9d1e0 !important;
 }
 
-/* ── Summary table ── */
 .vc-table-header {
     display: flex;
     padding: 0.38rem 0.9rem;
@@ -204,27 +192,20 @@ st.markdown("""
 .vc-status-risk    { color: #ff4d4f !important; }
 .vc-status-healthy { color: #73d13d !important; }
 
-/* ── Info box ── */
 [data-testid="stAlert"] {
     background-color: #1a2035 !important;
     border: 1px solid #2d4080 !important;
     color: #a0b0d0 !important;
     border-radius: 8px !important;
 }
-
-/* ── Progress bar ── */
 [data-testid="stProgress"] > div > div {
     background: linear-gradient(90deg, #73d13d, #faad14, #ff4d4f);
 }
-
-/* ── Expander ── */
 [data-testid="stExpander"] {
     background: #1a1f2e !important;
     border: 1px solid #2d3347 !important;
     border-radius: 8px !important;
 }
-
-/* ── Hide branding ── */
 #MainMenu, footer { visibility: hidden; }
 </style>
 """, unsafe_allow_html=True)
@@ -241,7 +222,7 @@ def load_artifacts():
 
 model, scaler, importance_df, THRESHOLD = load_artifacts()
 
-# ── Chart style — always dark ──────────────────────────
+# ── Chart Style ────────────────────────────────────────
 CHART_BG   = "#0f1117"
 CHART_FG   = "#e8ecf4"
 CHART_GRID = "#2d3347"
@@ -258,6 +239,49 @@ def style_ax(ax, fig):
     ax.spines["bottom"].set_color(CHART_GRID)
     ax.xaxis.grid(True, color=CHART_GRID, linewidth=0.5, linestyle="--")
     ax.set_axisbelow(True)
+
+# ── Cached Global Importance Chart ────────────────────
+# KEY FIX: @st.cache_data prevents this chart from
+# redrawing every time a sidebar slider moves.
+# Without this, every slider interaction triggers a full
+# matplotlib redraw → page flickers and shakes.
+# With cache: chart is built ONCE, stored in memory,
+# returned instantly on subsequent reruns.
+@st.cache_data
+def build_global_chart(_importance_df):
+    n      = len(_importance_df)
+    colors = [
+        "#c0392b" if i >= n - 3
+        else "#2563eb" if i >= n - 8
+        else "#3d4a63"
+        for i in range(n)
+    ]
+    fig, ax = plt.subplots(figsize=(10, 7))
+    style_ax(ax, fig)
+    ax.barh(
+        _importance_df["Feature"][::-1],
+        _importance_df["Importance"][::-1],
+        color=colors,
+        edgecolor=CHART_BG,
+        height=0.62
+    )
+    for i, imp in enumerate(_importance_df["Importance"][::-1]):
+        ax.text(imp + 0.001, i, f"{imp:.3f}",
+                va="center", fontsize=8, color="#8892aa")
+    critical  = mpatches.Patch(color="#c0392b", label="Critical  (Top 3)")
+    important = mpatches.Patch(color="#2563eb", label="Important (Top 4-8)")
+    minor     = mpatches.Patch(color="#3d4a63", label="Minor")
+    ax.legend(handles=[critical, important, minor],
+              loc="lower right", fontsize=9,
+              facecolor="#1a1f2e", edgecolor="#2d3347",
+              labelcolor=CHART_FG)
+    ax.set_xlabel("Importance Score", fontsize=11)
+    ax.set_title(
+        "Feature Importance — Random Forest (200 estimators)",
+        fontsize=13, fontweight="bold", pad=15
+    )
+    plt.tight_layout()
+    return fig
 
 # ── Healthy Ranges ─────────────────────────────────────
 HEALTHY_RANGES = {
@@ -368,7 +392,8 @@ predict_btn = st.sidebar.button(
 # HEADER
 # ══════════════════════════════════════════════════════
 st.markdown(
-    "<h1 style='margin-bottom:0.15rem;color:#f0f4ff;'>VitaCheck — AI Health Risk Classifier</h1>",
+    "<h1 style='margin-bottom:0.15rem;color:#f0f4ff;'>"
+    "VitaCheck — AI Health Risk Classifier</h1>",
     unsafe_allow_html=True
 )
 st.markdown(
@@ -380,15 +405,17 @@ st.markdown(
     "based on 22 clinical and lifestyle features.</p>",
     unsafe_allow_html=True
 )
-st.markdown("<hr style='border-color:#2d3347;margin-bottom:1.2rem;'>",
-            unsafe_allow_html=True)
+st.markdown(
+    "<hr style='border-color:#2d3347;margin-bottom:1.2rem;'>",
+    unsafe_allow_html=True
+)
 
 # ── Metric Cards ───────────────────────────────────────
 c1, c2, c3, c4 = st.columns(4)
 for col, label, value in [
-    (c1, "Training Samples",  "9,549"),
-    (c2, "Algorithm",         "Random Forest"),
-    (c3, "Recall",            "99.30%"),
+    (c1, "Training Samples",   "9,549"),
+    (c2, "Algorithm",          "Random Forest"),
+    (c3, "Recall",             "99.30%"),
     (c4, "Decision Threshold", f"{THRESHOLD:.2f}"),
 ]:
     col.markdown(
@@ -414,47 +441,13 @@ if not predict_btn:
         '<div class="vc-section-title">Global Feature Importance</div>'
         '<div class="vc-section-caption">Features ranked by contribution to the model\'s '
         'predictions across all 9,549 training records. '
-        'Red = critical (top 3) &nbsp;|&nbsp; Blue = important (top 4–8) &nbsp;|&nbsp; '
+        'Red = critical (top 3) &nbsp;|&nbsp; Blue = important (top 4-8) &nbsp;|&nbsp; '
         'Grey = minor.</div>',
         unsafe_allow_html=True
     )
 
-    n      = len(importance_df)
-    colors = [
-        "#c0392b" if i >= n - 3
-        else "#2563eb" if i >= n - 8
-        else "#3d4a63"
-        for i in range(n)
-    ]
-
-    fig, ax = plt.subplots(figsize=(10, 7))
-    style_ax(ax, fig)
-
-    ax.barh(
-        importance_df["Feature"][::-1],
-        importance_df["Importance"][::-1],
-        color=colors,
-        edgecolor=CHART_BG,
-        height=0.62
-    )
-    for i, imp in enumerate(importance_df["Importance"][::-1]):
-        ax.text(imp + 0.001, i, f"{imp:.3f}",
-                va="center", fontsize=8, color="#8892aa")
-
-    critical  = mpatches.Patch(color="#c0392b", label="Critical  (Top 3)")
-    important = mpatches.Patch(color="#2563eb", label="Important (Top 4-8)")
-    minor     = mpatches.Patch(color="#3d4a63", label="Minor")
-    leg = ax.legend(handles=[critical, important, minor],
-                    loc="lower right", fontsize=9,
-                    facecolor="#1a1f2e", edgecolor="#2d3347",
-                    labelcolor=CHART_FG)
-
-    ax.set_xlabel("Importance Score", fontsize=11)
-    ax.set_title(
-        "Feature Importance — Random Forest (200 estimators)",
-        fontsize=13, fontweight="bold", pad=15
-    )
-    plt.tight_layout()
+    # Uses cached chart — no redraw on slider interactions
+    fig = build_global_chart(importance_df)
     st.pyplot(fig)
     plt.close()
 
@@ -614,7 +607,6 @@ else:
 
     fig, ax = plt.subplots(figsize=(11, 7))
     style_ax(ax, fig)
-
     ax.barh(
         importance_df["Feature"][::-1],
         importance_df["Importance"][::-1],
@@ -634,7 +626,6 @@ else:
               loc="lower right", fontsize=9,
               facecolor="#1a1f2e", edgecolor="#2d3347",
               labelcolor=CHART_FG)
-
     ax.set_xlabel("Global Importance Score", fontsize=11)
     ax.set_title(
         "Personalised Risk Profile — Feature Importance vs Your Health Values",
@@ -644,7 +635,7 @@ else:
     st.pyplot(fig)
     plt.close()
 
-    # ── Summary Table — pure HTML ──────────────────────
+    # ── Summary Table ──────────────────────────────────
     st.markdown(
         "<hr style='border-color:#2d3347;margin:1.5rem 0;'>",
         unsafe_allow_html=True
@@ -657,7 +648,6 @@ else:
         unsafe_allow_html=True
     )
 
-    # Table header
     st.markdown(
         '<div class="vc-table-header">'
         '<span class="vc-col-feat">Feature</span>'
@@ -672,9 +662,9 @@ else:
     for feature, value in user_values.items():
         low, high  = HEALTHY_RANGES[feature]
         concerning = (value < low or value > high)
-        row_class  = "vc-row-risk"   if concerning else "vc-row-normal"
+        row_class  = "vc-row-risk"    if concerning else "vc-row-normal"
         status_cls = "vc-status-risk" if concerning else "vc-status-healthy"
-        status_txt = "Concerning"    if concerning else "Normal"
+        status_txt = "Concerning"     if concerning else "Normal"
 
         imp_arr = importance_df[
             importance_df["Feature"] == feature
