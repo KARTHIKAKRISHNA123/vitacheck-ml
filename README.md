@@ -1,4 +1,15 @@
-
+---
+title: VitaCheck
+emoji: 🧬
+colorFrom: blue
+colorTo: red
+sdk: streamlit
+sdk_version: 1.45.1
+app_file: app.py
+pinned: false
+license: mit
+short_description: AI-powered health risk classifier using Random Forest
+---
 
 <div align="center">
 
@@ -177,20 +188,22 @@ flowchart TD
    pd.read_csv loads feature_importance.csv
    json.load reads threshold.json (0.25)
    All cached via @st.cache_resource
-4. 22 sidebar widgets rendered (sliders + selectboxes)
-5. Global feature importance chart rendered via matplotlib
+4. 22 sidebar widgets rendered inside st.form
+5. Global feature importance chart rendered as base64 inline image
 ```
 
 ### Prediction Submission
 
 ```
-1. User adjusts widgets, clicks Run Health Risk Assessment
-2. input_data dict built — 22 features in exact training column order
-3. pd.DataFrame([input_data]).drop("Target") creates 1-row DataFrame
+1. User fills inputs, clicks Run Health Risk Assessment (form submit)
+2. ONE Python rerun triggered — the only rerun in the session
+3. input_data dict built — 22 features in exact training column order
 4. model.predict_proba(input_df)[0][1] returns at-risk probability
 5. prediction = int(proba >= 0.25) applies tuned threshold
 6. Loop over 22 features vs HEALTHY_RANGES — builds risk_flags list
-7. Result card, probability gauge, personalised chart, summary table rendered
+7. All HTML pre-computed and stored in st.session_state.result_cache
+8. Result card, probability bar, personalised chart, summary table rendered
+9. All post-result interactions handled in browser — zero further reruns
 ```
 
 ---
@@ -211,11 +224,12 @@ novagen_dataset.csv
   → Best threshold 0.25 saved to threshold.json
 
 Streamlit Runtime
-  → User input (22 values) → pd.DataFrame (1 x 22)
+  → User input (22 values via st.form) → pd.DataFrame (1 x 22)
   → model.predict_proba() → at-risk probability
   → probability >= 0.25 → AT RISK or HEALTHY
   → 22 values compared against HEALTHY_RANGES
-  → Personalised chart + summary table
+  → All HTML pre-built → stored in result_cache
+  → Personalised chart encoded as base64 → zero layout shift
 ```
 
 ---
@@ -303,20 +317,21 @@ sequenceDiagram
     participant Model as vitacheck_model.pkl
     participant Renderer as Output Renderer
 
-    User->>Sidebar: Adjust 22 health feature widgets
+    User->>Sidebar: Fill 22 health feature inputs inside st.form
     User->>Sidebar: Click Run Health Risk Assessment
-    Sidebar->>App: predict_btn = True
+    Sidebar->>App: ONE rerun triggered by form submit
     App->>App: Build input_data dict
     App->>App: pd.DataFrame drop Target column
     App->>Model: predict_proba(input_df)
     Model-->>App: probability array
     App->>App: apply threshold 0.25
     App->>App: compare values vs HEALTHY_RANGES
-    App->>Renderer: risk_flags and healthy_flags
+    App->>App: pre-build all HTML into result_cache
+    App->>Renderer: render from result_cache
     Renderer-->>User: Result card
-    Renderer-->>User: Risk probability gauge
-    Renderer-->>User: Personalised bar chart
-    Renderer-->>User: 22-row health summary table
+    Renderer-->>User: CSS progress bar
+    Renderer-->>User: Base64 inline chart
+    Renderer-->>User: 22-row HTML summary table
 ```
 
 ### 4. Activity Diagram
@@ -343,10 +358,11 @@ flowchart TD
 stateDiagram-v2
     [*] --> Loading : App starts
     Loading --> LandingPage : Artifacts cached
-    LandingPage --> LandingPage : User adjusts widgets
-    LandingPage --> Predicting : User clicks Run Assessment
-    Predicting --> ResultPage : predict_proba completes
-    ResultPage --> LandingPage : User resubmits
+    LandingPage --> LandingPage : User fills form inputs (zero reruns)
+    LandingPage --> Predicting : User clicks submit
+    Predicting --> ResultPage : ONE rerun completes
+    ResultPage --> ResultPage : User interacts via browser only
+    ResultPage --> Predicting : User resubmits form
 ```
 
 ### 6. Component Diagram
@@ -354,11 +370,11 @@ stateDiagram-v2
 ```mermaid
 flowchart TD
     subgraph FrontendLayer["Frontend - app.py"]
-        CMP1[Sidebar Input - 22 widgets]
+        CMP1[Sidebar st.form - 22 inputs]
         CMP2[Landing Page - metric cards and global chart]
         CMP3[Result Card - AT RISK or HEALTHY]
         CMP4[Risk Factor List - personalised flags]
-        CMP5[Personalised Chart - red-green bars]
+        CMP5[Personalised Chart - base64 inline]
         CMP6[Summary Table - 22-row HTML]
     end
     subgraph MLLayer["ML Layer - model/"]
@@ -590,6 +606,72 @@ streamlit run app.py
 | Table rendering | Pure HTML divs | pandas Styler | Streamlit dark theme makes Styler colors invisible |
 | Model serialization | joblib | pickle | Better handling of large numpy arrays |
 | Large file storage | Git LFS | Regular git | HF Spaces rejects files over 10MB in git history |
+| Sidebar inputs | st.form | Individual widgets | Form suppresses reruns on every input — only one rerun on submit |
+| Chart rendering | Base64 inline img with explicit dimensions | st.pyplot | Eliminates image-load layout shift; browser pre-allocates space before PNG decodes |
+| Progress bar | CSS div with gradient | st.progress | st.progress re-renders its DOM on rerun causing flicker |
+| Expandable section | HTML details/summary | st.expander | st.expander triggers full Python rerun on click; native HTML is browser-only |
+
+---
+
+## Fixing the HF Spaces Page Shake
+
+<details>
+<summary>Root cause analysis and resolution</summary>
+
+### Why It Happens
+
+HF Spaces embeds Streamlit apps inside an `<iframe>` with `height: auto`. The iframe listens to the Streamlit app via `postMessage` and resizes to match content height. Streamlit reruns the entire Python script on every widget interaction, which causes:
+
+```
+widget click → Python rerun → DOM cleared → DOM repainted → iframe resizes → visible jump
+```
+
+### What Was Tried and Why Each Failed
+
+| Attempt | Why it failed |
+|---|---|
+| `@st.cache_data` on charts | Prevented recomputation but HTML elements still re-rendered |
+| `st.empty()` slot | Slot still patches its content on every rerun |
+| `st.session_state` snapshot | Identical HTML still caused DOM patches and flicker |
+| Pre-computed `result_cache` | Python reruns still caused iframe resize |
+| CSS `height: 100vh` lock | Applied too late; Streamlit's initial paint overrode it |
+| Sliders to `number_input` | `+`/`-` buttons still triggered continuous reruns |
+| `@st.fragment` on sidebar | `st.sidebar.*` not supported inside a fragment |
+| `with st.sidebar:` inside fragment | Streamlit 1.45.1 blocks this — fragment and sidebar contexts conflict |
+
+### The Actual Fix — Four Compounding Causes
+
+**Cause 1 — Continuous reruns on every widget interaction**
+
+Fixed with `st.form()`. All sidebar inputs wrapped in a single form. Widget interactions inside a form produce zero reruns. Only the submit button triggers one deliberate rerun.
+
+**Cause 2 — `st.pyplot` image-load layout shift**
+
+`st.pyplot` inserts an `<img>` with no declared dimensions. The browser renders the page, reports height to HF Spaces, then the PNG loads, the image expands, and a second resize message fires. Fixed by encoding charts as inline base64 with explicit pixel dimensions:
+
+```python
+f'<img src="data:image/png;base64,{b64}" width="{pw}" height="{ph}" style="width:100%;height:auto;">'
+```
+
+**Cause 3 — DOM branch swap on state transition + iframe resize**
+
+When landing page transitions to results page, all DOM nodes are replaced. Fixed with CSS:
+
+```css
+.block-container { min-height: 100vh !important; }
+.stApp { height: 100vh !important; overflow: hidden !important; }
+[data-testid="stMain"] { height: 100vh !important; overflow-y: auto !important; }
+```
+
+**Cause 4 — `st.expander` and `st.progress` rerenders**
+
+`st.expander` click triggers a full Python rerun. `st.progress` re-renders its DOM on rerun. Fixed by replacing both with pure HTML equivalents — CSS gradient div for progress, native `<details>`/`<summary>` for expandable sections.
+
+### Final State
+
+The app triggers **exactly one** Python rerun per session — when the user clicks submit. Every other interaction is handled entirely in the browser. The iframe height is locked and never changes.
+
+</details>
 
 ---
 
@@ -602,7 +684,8 @@ streamlit run app.py
 | HF push rejected over 10MB | Model committed without LFS | Run `git lfs migrate import --include="*.pkl" --everything` |
 | HF push rejected binary files | PNG files not in LFS | Run `git lfs migrate import --include="*.png" --everything` |
 | KeyError RdY1Gn colormap | Typo — 1 instead of lowercase l | Change to `cmap="RdYlGn"` |
-
+| Page shaking on HF Spaces | iframe auto-resize on every Streamlit rerun | Use `st.form` for all inputs; render charts as base64 with explicit dimensions; replace `st.expander` and `st.progress` with HTML equivalents |
+| `st.fragment` sidebar error | `st.sidebar.*` not supported inside fragment | Use `st.form` instead — simpler and more effective for this use case |
 
 ---
 
